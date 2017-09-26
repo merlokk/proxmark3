@@ -1533,7 +1533,6 @@ void MifareCGetBlock(uint32_t arg0, uint32_t arg1, uint32_t arg2, uint8_t *datai
 }
 
 void MifareCIdent(){
-
 	// card commands
 	uint8_t wupC1[]       = { 0x40 };
 	uint8_t wupC2[]       = { 0x43 };
@@ -1543,6 +1542,14 @@ void MifareCIdent(){
 
 	uint8_t receivedAnswer[MAX_MIFARE_FRAME_SIZE];
 	uint8_t receivedAnswerPar[MAX_MIFARE_PARITY_SIZE];
+
+	// enable tracing
+//	clear_trace();
+//	set_tracing(true);
+
+	FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
+	SpinDelay(50);
+	iso14443a_setup(FPGA_HF_ISO14443A_READER_LISTEN);
 
 	ReaderTransmitBitsPar(wupC1,7,0, NULL);
 	if(ReaderReceive(receivedAnswer, receivedAnswerPar) && (receivedAnswer[0] == 0x0a)) {
@@ -1556,8 +1563,28 @@ void MifareCIdent(){
 
 	// From iceman1001: removed the if,  since some magic tags misbehavies and send an answer to it.
 	mifare_classic_halt(NULL, 0);
+	
+	// gen2
+	FpgaWriteConfWord(FPGA_MAJOR_MODE_OFF);
+	SpinDelay(50);
+	iso14443a_setup(FPGA_HF_ISO14443A_READER_LISTEN);
+	
+	if(!iso14443a_select_card(NULL, NULL, NULL, true, 0)) {
+		if (MF_DBGLEVEL >= 1)	Dbprintf("Can't select card");
+		};
 
-	cmd_send(CMD_ACK,isOK,0,0,0,0);
+	uint16_t len = mifare_sendcmd_short(NULL, 1, 0x30, 0, receivedAnswer, receivedAnswerPar, NULL);
+	if ((len != 1) || (receivedAnswer[0] != 0x0A)) {   
+		Dbprintf("gen2 test fail");
+	};
+		
+	if(mifare_classic_halt(NULL, 0)) {
+		if (MF_DBGLEVEL > 2)	Dbprintf("Halt error");
+	};
+	
+	
+
+	cmd_send(CMD_ACK, isOK, 0, 0, 0, 0);
 }
 
 //
