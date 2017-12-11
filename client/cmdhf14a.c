@@ -1016,16 +1016,18 @@ int CmdHF14ACmdEml(const char *cmd) {
 	uint32_t res = 0;
 	
 	UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
-	SendCommand(&c);
 
     UsbCommand resp;
 	while (true) {
-		if (WaitForResponseTimeout(CMD_ACK, &resp, 1500)) {
+		SendCommand(&c);
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
 			res = resp.arg[0];
-			PrintAndLog("res=%d", res);
-			if (!res)
+			PrintAndLog("res=%d [%d]", res, resp.arg[1]);
+			if (!res) {
 				PrintAndLog("All is OK. Returned.");
 				break;
+			}
+			
 		} else {
 			PrintAndLog("Error command flow.");
 			break;

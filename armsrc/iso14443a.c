@@ -2589,16 +2589,47 @@ void RAMFUNC SniffMifare(uint8_t param) {
 // 
 //-----------------------------------------------------------------------------
 void RAMFUNC EMVEml(uint32_t param) {
+	uint32_t rx_len;
+	byte_t rx[sizeof(UsbCommand)];
+	
 	LEDsoff();
+	LED_A_ON();
 
 	// init trace buffer
 	clear_trace();
 	set_tracing(true);
 
+	// init ACK
+	cmd_send(CMD_ACK, 1, 0, 0, NULL, 0);
 	
+	int i = 0;
+	while (true) {
+		if(BUTTON_PRESS()) {
+			DbpString("cancelled by button");
+			break;
+		}
+
+		if (usb_get_length() >= 64) {
+			rx_len = usb_read(rx, sizeof(UsbCommand));
+			if (rx_len) {
+
+				WDT_HIT();
+				SpinDelay(500);
+				WDT_HIT();
+				SpinDelay(500);
+				WDT_HIT();
+				SpinDelay(500);
+				
+				if (i++ > 5) {
+					cmd_send(CMD_ACK, 0, i, 0, NULL, 0);
+					break;
+				} else {
+					cmd_send(CMD_ACK, 1, i, 0, NULL, 0);
+				}
+			}
+		}
+	}
 	
-	
-	cmd_send(CMD_ACK, 0, 0, 0, NULL, 0);
 	Dbprintf("Command done.");
 	LEDsoff();
 }

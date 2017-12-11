@@ -42,6 +42,7 @@ void usb_enable();
 bool usb_check();
 bool usb_poll();
 bool usb_poll_validate_length();
+extern int usb_get_length();
 uint32_t usb_read(byte_t* data, size_t len);
 uint32_t usb_write(const byte_t* data, const size_t len);
 
