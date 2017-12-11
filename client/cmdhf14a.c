@@ -1012,6 +1012,29 @@ static int waitCmd(uint8_t iSelect) {
 	return 0;
 }
 
+int CmdHF14ACmdEml(const char *cmd) {
+	uint32_t res = 0;
+	
+	UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
+	SendCommand(&c);
+
+    UsbCommand resp;
+	while (true) {
+		if (WaitForResponseTimeout(CMD_ACK, &resp, 1500)) {
+			res = resp.arg[0];
+			PrintAndLog("res=%d", res);
+			if (!res)
+				PrintAndLog("All is OK. Returned.");
+				break;
+		} else {
+			PrintAndLog("Error command flow.");
+			break;
+		}
+	}
+	
+	return 0;
+}
+
 static command_t CommandTable[] = 
 {
   {"help",   CmdHelp,              1, "This help"},
@@ -1023,6 +1046,7 @@ static command_t CommandTable[] =
   {"snoop",  CmdHF14ASnoop,        0, "Eavesdrop ISO 14443 Type A"},
   {"apdu",   CmdHF14AAPDU,         0, "Send an ISO 7816-4 APDU via ISO 14443-4 block transmission protocol"},
   {"raw",    CmdHF14ACmdRaw,       0, "Send raw hex data to tag"},
+  {"eml",    CmdHF14ACmdEml,       0, "EMV emulator sketch"},
   {NULL, NULL, 0, NULL}
 };
 

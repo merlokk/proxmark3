@@ -2583,3 +2583,22 @@ void RAMFUNC SniffMifare(uint8_t param) {
 	Dbprintf("maxDataLen=%x, Uart.state=%x, Uart.len=%x", maxDataLen, Uart.state, Uart.len);
 	LEDsoff();
 }
+
+//-----------------------------------------------------------------------------
+// EMV emulator. 
+// 
+//-----------------------------------------------------------------------------
+void RAMFUNC EMVEml(uint32_t param) {
+	LEDsoff();
+
+	// init trace buffer
+	clear_trace();
+	set_tracing(true);
+
+	
+	
+	
+	cmd_send(CMD_ACK, 0, 0, 0, NULL, 0);
+	Dbprintf("Command done.");
+	LEDsoff();
+}

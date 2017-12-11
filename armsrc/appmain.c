@@ -1216,6 +1216,10 @@ void UsbPacketReceived(uint8_t *packet, int len)
 		case CMD_MIFARE_SNIFFER:
 			SniffMifare(c->arg[0]);
 			break;
+			
+		case CMD_EMV_EMULATOR:
+			EMVEml(c->arg[0]);
+			break;
 
 #endif
 

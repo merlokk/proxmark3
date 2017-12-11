@@ -211,6 +211,9 @@ typedef struct{
 
 #define CMD_HF_SNIFFER                                                    0x0800
 
+// for EMV commands
+#define CMD_EMV_EMULATOR                                                  0x0901
+
 #define CMD_UNKNOWN                                                       0xFFFF
 
 
