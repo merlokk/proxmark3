@@ -1019,6 +1019,13 @@ int CmdHF14ACmdEml(const char *cmd) {
 
     UsbCommand resp;
 	while (true) {
+		c.arg[0] = 0x00;
+		if (ukbhit()) {
+			getchar();
+			printf("\nAborted via keyboard!\n");
+			c.arg[0] = 0x01;
+		}
+
 		SendCommand(&c);
 		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
 			res = resp.arg[0];
@@ -1032,8 +1039,11 @@ int CmdHF14ACmdEml(const char *cmd) {
 			PrintAndLog("Error command flow.");
 			break;
 		}
+		
+		msleep(300);
 	}
 	
+	msleep(500);
 	return 0;
 }
 

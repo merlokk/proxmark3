@@ -2588,19 +2588,57 @@ void RAMFUNC SniffMifare(uint8_t param) {
 // EMV emulator. 
 // 
 //-----------------------------------------------------------------------------
+#define EMV_DMA_BUFFER_SIZE 1024LL
+
+enum EMVEmlState {
+	eveFinished,
+	eveInitDone,
+	eveNoField,
+	eveFieldOK,
+	eveSelect3OK,
+	eveReady,
+	eveReadQuery,
+	eveSendResponse,
+	eveLast
+};
+
 void RAMFUNC EMVEml(uint32_t param) {
 	uint32_t rx_len;
 	byte_t rx[sizeof(UsbCommand)];
+	UsbCommand *rxcmd = (UsbCommand*)rx;
 	
 	LEDsoff();
 	LED_A_ON();
+	LED_B_ON();
 
 	// init trace buffer
 	clear_trace();
 	set_tracing(true);
 
+	// free eventually allocated BigBuf memory
+	BigBuf_free();
+	// allocate the DMA buffer, used to stream samples from the FPGA
+	uint8_t *dmaBuf = BigBuf_malloc(EMV_DMA_BUFFER_SIZE);
+	uint8_t *data = dmaBuf;
+	int maxDataLen = 0;
+	int dataLen = 0;
+	uint32_t sniffCounter = 0;
+
+	enum EMVEmlState state = eveInitDone;
+	LED_B_OFF();
+
+	// here some init commands
+	
 	// init ACK
-	cmd_send(CMD_ACK, 1, 0, 0, NULL, 0);
+	state = eveInitDone;
+	LED_C_ON();
+	cmd_send(CMD_ACK, state, 0, 0, NULL, 0);
+	LED_C_OFF();
+
+	iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+
+	// Setup for the DMA.
+	FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); // set transfer address and number of bytes. Start transfer.
 	
 	int i = 0;
 	while (true) {
@@ -2609,27 +2647,86 @@ void RAMFUNC EMVEml(uint32_t param) {
 			break;
 		}
 
+		LED_A_ON();
+		WDT_HIT();
+		
+		state = eveNoField;
+
+		
+		int readBufDataP = data - dmaBuf;	// number of bytes we have processed so far
+		int dmaBufDataP = EMV_DMA_BUFFER_SIZE - AT91C_BASE_PDC_SSC->PDC_RCR; // number of bytes already transferred
+		if (readBufDataP <= dmaBufDataP){			// we are processing the same block of data which is currently being transferred
+			dataLen = dmaBufDataP - readBufDataP;	// number of bytes still to be processed
+		} else {									
+//			dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP + dmaBufDataP; // number of bytes still to be processed
+			dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP; 
+		}
+		// test for length of buffer
+		if(dataLen > maxDataLen) {					// we are more behind than ever...
+			maxDataLen = dataLen;					
+			if(dataLen > (EMV_DMA_BUFFER_SIZE * 9 / 10)) {
+				Dbprintf("blew circular buffer! dataLen=0x%x", dataLen);
+				break;
+			}
+		}
+		if(dataLen > 0) {
+
+			// primary buffer was stopped ( <-- we lost data!
+			if (!AT91C_BASE_PDC_SSC->PDC_RCR) {
+				AT91C_BASE_PDC_SSC->PDC_RPR = (uint32_t) dmaBuf;
+				AT91C_BASE_PDC_SSC->PDC_RCR = EMV_DMA_BUFFER_SIZE;
+				Dbprintf("RxEmpty ERROR!!! data length:%d", dataLen);
+			}
+			// secondary buffer sets as primary, secondary buffer was stopped
+			if (!AT91C_BASE_PDC_SSC->PDC_RNCR) {
+				AT91C_BASE_PDC_SSC->PDC_RNPR = (uint32_t) dmaBuf;
+				AT91C_BASE_PDC_SSC->PDC_RNCR = EMV_DMA_BUFFER_SIZE;
+			}
+
+			
+			
+			sniffCounter++;
+			if (!(sniffCounter % 100000))
+				Dbprintf("cnt=%u dlen=%d", sniffCounter, dataLen);
+			
+			data += dataLen;
+			if(data >= dmaBuf + EMV_DMA_BUFFER_SIZE) {
+				data = dmaBuf;
+			}
+		}
+		LED_A_OFF();
+
+		
 		if (usb_get_length() >= 64) {
 			rx_len = usb_read(rx, sizeof(UsbCommand));
 			if (rx_len) {
-
-				WDT_HIT();
-				SpinDelay(500);
-				WDT_HIT();
-				SpinDelay(500);
-				WDT_HIT();
-				SpinDelay(500);
-				
-				if (i++ > 5) {
-					cmd_send(CMD_ACK, 0, i, 0, NULL, 0);
+				// exit from client
+				if (rxcmd->arg[0]) {
+					i = 200;
+				}
+			
+				if (i++ > 100) {
+					LED_C_ON();
+					cmd_send(CMD_ACK, eveFinished, maxDataLen, 0, NULL, 0);
+					LED_C_OFF();
 					break;
 				} else {
-					cmd_send(CMD_ACK, 1, i, 0, NULL, 0);
+					LED_C_ON();
+					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);
+					LED_C_OFF();
 				}
 			}
 		}
 	}
 	
+	FpgaDisableSscDma();
+
+	Dbprintf("dlen=%d maxdlen=%d count=%u", dataLen, maxDataLen, sniffCounter);
+
+	LED_C_ON();
+	cmd_send(CMD_ACK, eveFinished, 0, maxDataLen, NULL, 0);
+	LED_C_OFF();
+
 	Dbprintf("Command done.");
 	LEDsoff();
 }
