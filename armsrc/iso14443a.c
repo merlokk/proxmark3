@@ -2588,46 +2588,185 @@ void RAMFUNC SniffMifare(uint8_t param) {
 // EMV emulator. 
 // 
 //-----------------------------------------------------------------------------
-#define EMV_DMA_BUFFER_SIZE 1024LL
+#define EMV_DMA_BUFFER_SIZE 2048LL
+#define MAX_EMV_FRAME_SIZE  257
+#define MAX_EMV_PARITY_SIZE 33
+#define EMV_MAX_ATS_LEN 100
 
 enum EMVEmlState {
-	eveFinished,
-	eveInitDone,
-	eveNoField,
-	eveFieldOK,
-	eveSelect3OK,
-	eveReady,
+	eveFinished,   // emulator exit
+	eveInitDone,   // initialization
+	eveNoField,    // no field working mode (field search)
+	eveIdle,
+	eveSelect1,
+	eveSelect2,
+	eveSelect3,
+	eveReadyIso3,
+	eveReadyIso4,    // apdu working mode
 	eveReadQuery,
 	eveSendResponse,
+	eveHalted,
 	eveLast
 };
+
+static inline int SscDmaProcess(uint8_t *dmaBuf, int len, uint8_t *data) {
+	int dataLen = 0;
+	int readBufDataP = data - dmaBuf;	// number of bytes we have processed so far
+	int dmaBufDataP = EMV_DMA_BUFFER_SIZE - AT91C_BASE_PDC_SSC->PDC_RCR; // number of bytes already transferred
+
+	if (readBufDataP <= dmaBufDataP){			// we are processing the same block of data which is currently being transferred
+		dataLen = dmaBufDataP - readBufDataP;	// number of bytes still to be processed
+	} else {									
+		//dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP + dmaBufDataP; // number of bytes still to be processed
+		dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP; 
+	}
+
+	if(dataLen > 0) {
+		// primary buffer was stopped ( <-- we lost data!
+		if (!AT91C_BASE_PDC_SSC->PDC_RCR) {
+			AT91C_BASE_PDC_SSC->PDC_RPR = (uint32_t) dmaBuf;
+			AT91C_BASE_PDC_SSC->PDC_RCR = EMV_DMA_BUFFER_SIZE;
+			Dbprintf("RxEmpty ERROR!!! data length:%d", dataLen);
+		}
+
+		// secondary buffer sets as primary, secondary buffer was stopped
+		if (!AT91C_BASE_PDC_SSC->PDC_RNCR) {
+			AT91C_BASE_PDC_SSC->PDC_RNPR = (uint32_t) dmaBuf;
+			AT91C_BASE_PDC_SSC->PDC_RNCR = EMV_DMA_BUFFER_SIZE;
+		}
+	}
+
+	return dataLen;
+}
+
+enum EMVPrecompiledData {
+	epUIDBCC1,
+	epUIDBCC2,
+	epUIDBCC3,
+	epATQA,
+	epSAK1,
+	epSAK2,
+	epSAK3,
+	epATS,
+	epLast
+};
+
+tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, uint8_t *SAK, uint8_t *ATS, size_t ATSLen) {
+//	uint8_t *rUID = BigBuf_malloc(UIDLen);
+	static uint8_t rUIDBCC1[5];
+	static uint8_t rUIDBCC2[5];
+	static uint8_t rUIDBCC3[5];
+	static uint8_t rATQA[2];
+	static uint8_t rSAK1[3];
+	static uint8_t rSAK2[3];
+	static uint8_t rSAK3[3];
+	static uint8_t rATS[EMV_MAX_ATS_LEN];
+	
+	rATQA[0] = ATQA[1];
+	rATQA[1] = ATQA[0];
+	memcpy(rATS, ATS, ATSLen);
+	
+	switch(UIDLen) {
+		case 4:
+			memcpy(rUIDBCC1, UID, 4);
+			memcpy(rSAK1, SAK, 1);
+			break;
+		case 7:
+			rATQA[0] |= 0x40;
+			rUIDBCC1[0] = 0x88;
+			memcpy(&rUIDBCC1[1], UID, 3);
+			memcpy(rUIDBCC2, &UID[3], 4);
+			rSAK1[0] = 0x04; // uid not finished
+			memcpy(rSAK2, SAK, 1);
+			break;
+		case 10:  // not tested!
+			rATQA[0] |= 0x40;
+			rUIDBCC1[0] = 0x88;
+			memcpy(&rUIDBCC1[1], UID, 3);
+			rUIDBCC2[0] = 0x88;
+			rSAK1[0] = 0x04; // uid not finished
+			memcpy(&rUIDBCC2[1], &UID[3], 3);
+			rSAK2[0] = 0x04; // uid not finished
+			memcpy(rUIDBCC3, &UID[6], 4);
+			memcpy(rSAK3, SAK, 1);
+			break;
+		default:
+			return NULL;
+	}
+
+	rUIDBCC1[4] = rUIDBCC1[0] ^ rUIDBCC1[1] ^ rUIDBCC1[2] ^ rUIDBCC1[3];
+	rUIDBCC2[4] = rUIDBCC2[0] ^ rUIDBCC2[1] ^ rUIDBCC2[2] ^ rUIDBCC2[3];
+	rUIDBCC3[4] = rUIDBCC3[0] ^ rUIDBCC3[1] ^ rUIDBCC3[2] ^ rUIDBCC3[3];
+	AppendCrc14443a(rSAK1, 1);
+	AppendCrc14443a(rSAK2, 1);
+	AppendCrc14443a(rSAK3, 1);
+
+	static tag_response_info_t responses_init[] = {
+		{ .response = rUIDBCC1,  .response_n = sizeof(rUIDBCC1) },	
+		{ .response = rUIDBCC2,  .response_n = sizeof(rUIDBCC2) },	
+		{ .response = rUIDBCC3,  .response_n = sizeof(rUIDBCC3) },	
+		{ .response = rATQA,     .response_n = sizeof(rATQA) },	
+		{ .response = rSAK1,     .response_n = sizeof(rSAK1) },	
+		{ .response = rSAK2,     .response_n = sizeof(rSAK2) },	
+		{ .response = rSAK3,     .response_n = sizeof(rSAK3) },	
+		{ .response = rATS,      .response_n = 1 },	
+	};
+	responses_init[7].response_n = ATSLen;
+
+	// Here are array of predefined responses. Coded responses need one byte per bit to transfer (data, parity, start, stop, correction) 
+	// data_len * 8 data bits, data_len * 1 parity bits, response_count * (1 start bit, 1 stop bit, 1 correction bit)
+	size_t free_buffer_size = (26 + ATSLen) * 9 + 3 * 8 + 10;
+	uint8_t *free_buffer_pointer = BigBuf_malloc(free_buffer_size);
+	for (size_t i = 0; i < sizeof(responses_init) / sizeof(responses_init[0]); i++) {
+		prepare_allocated_tag_modulation(&responses_init[i], &free_buffer_pointer, &free_buffer_size);
+	}
+	
+	return &responses_init[0];
+}
 
 void RAMFUNC EMVEml(uint32_t param) {
 	uint32_t rx_len;
 	byte_t rx[sizeof(UsbCommand)];
 	UsbCommand *rxcmd = (UsbCommand*)rx;
+	bool EmulExit = false;
 	
 	LEDsoff();
-	LED_A_ON();
 	LED_B_ON();
 
 	// init trace buffer
 	clear_trace();
 	set_tracing(true);
 
-	// free eventually allocated BigBuf memory
+	// free and clear eventually allocated BigBuf memory
 	BigBuf_free();
+	BigBuf_Clear_ext(false);
 	// allocate the DMA buffer, used to stream samples from the FPGA
 	uint8_t *dmaBuf = BigBuf_malloc(EMV_DMA_BUFFER_SIZE);
 	uint8_t *data = dmaBuf;
 	int maxDataLen = 0;
 	int dataLen = 0;
-	uint32_t sniffCounter = 0;
 
 	enum EMVEmlState state = eveInitDone;
+
+	uint8_t *UID = (uint8_t*)"\x01\x02\x03\x04";
+	size_t UIDLen = 4;
+	uint8_t *ATQA = (uint8_t*)"\x00\x04";
+	uint8_t *SAK = (uint8_t*)"\x20";
+	uint8_t *ATS = (uint8_t*)"\x13\x78\x80\x72\x02\x80\x31\x80\x66\xb1\x84\x0c\x01\x6e\x01\x83\x00\x90\x00\x11\xd8";
+	size_t ATSLen = 21;
+	
+	// init precompiled responses
+	tag_response_info_t *resp = EMVEmlInitData(UID, UIDLen, ATQA, SAK, ATS, ATSLen);
+	if (!resp) {
+		Dbprintf("ERROR: can't allocate buffer for precompiled reponses.");
+	}
+
 	LED_B_OFF();
 
 	// here some init commands
+	uint8_t received[MAX_EMV_FRAME_SIZE];
+	uint8_t receivedPar[MAX_EMV_PARITY_SIZE];
+	UartInit(received, receivedPar);
 	
 	// init ACK
 	state = eveInitDone;
@@ -2635,33 +2774,22 @@ void RAMFUNC EMVEml(uint32_t param) {
 	cmd_send(CMD_ACK, state, 0, 0, NULL, 0);
 	LED_C_OFF();
 
+	// init
 	iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
-
-	// Setup for the DMA.
-	FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); // set transfer address and number of bytes. Start transfer.
+	FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
 	
-	int i = 0;
-	while (true) {
+	state = eveNoField;
+	while (resp) {
+		WDT_HIT();
 		if(BUTTON_PRESS()) {
-			DbpString("cancelled by button");
+			DbpString("Cancelled by button...");
+			EmulExit = true;
 			break;
 		}
 
-		LED_A_ON();
-		WDT_HIT();
+		dataLen = SscDmaProcess(dmaBuf, EMV_DMA_BUFFER_SIZE, data);
 		
-		state = eveNoField;
-
-		
-		int readBufDataP = data - dmaBuf;	// number of bytes we have processed so far
-		int dmaBufDataP = EMV_DMA_BUFFER_SIZE - AT91C_BASE_PDC_SSC->PDC_RCR; // number of bytes already transferred
-		if (readBufDataP <= dmaBufDataP){			// we are processing the same block of data which is currently being transferred
-			dataLen = dmaBufDataP - readBufDataP;	// number of bytes still to be processed
-		} else {									
-//			dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP + dmaBufDataP; // number of bytes still to be processed
-			dataLen = EMV_DMA_BUFFER_SIZE - readBufDataP; 
-		}
-		// test for length of buffer
+		// test length of buffer
 		if(dataLen > maxDataLen) {					// we are more behind than ever...
 			maxDataLen = dataLen;					
 			if(dataLen > (EMV_DMA_BUFFER_SIZE * 9 / 10)) {
@@ -2669,47 +2797,95 @@ void RAMFUNC EMVEml(uint32_t param) {
 				break;
 			}
 		}
-		if(dataLen > 0) {
 
-			// primary buffer was stopped ( <-- we lost data!
-			if (!AT91C_BASE_PDC_SSC->PDC_RCR) {
-				AT91C_BASE_PDC_SSC->PDC_RPR = (uint32_t) dmaBuf;
-				AT91C_BASE_PDC_SSC->PDC_RCR = EMV_DMA_BUFFER_SIZE;
-				Dbprintf("RxEmpty ERROR!!! data length:%d", dataLen);
-			}
-			// secondary buffer sets as primary, secondary buffer was stopped
-			if (!AT91C_BASE_PDC_SSC->PDC_RNCR) {
-				AT91C_BASE_PDC_SSC->PDC_RNPR = (uint32_t) dmaBuf;
-				AT91C_BASE_PDC_SSC->PDC_RNCR = EMV_DMA_BUFFER_SIZE;
-			}
-
+		// check field
+		if (state == eveNoField){
+		int vHf = (MAX_ADC_HF_VOLTAGE * AvgAdc(ADC_CHAN_HF)) >> 10;
+		if (vHf > MF_MINFIELDV) {
+			LED_A_ON();
+			if (state != eveIdle)	
+				UartReset();
+			state = eveIdle;
+		} else {
+			LED_A_OFF();
+			if (state != eveNoField)	
+				UartReset();
+			state = eveNoField;
+		}
+		}
 			
-			
-			sniffCounter++;
-			if (!(sniffCounter % 100000))
-				Dbprintf("cnt=%u dlen=%d", sniffCounter, dataLen);
-			
-			data += dataLen;
-			if(data >= dmaBuf + EMV_DMA_BUFFER_SIZE) {
-				data = dmaBuf;
+		if (state == eveNoField) {
+			// clear data from FPGA
+			if(dataLen > 0) {
+				data += dataLen;
+				if(data >= dmaBuf + EMV_DMA_BUFFER_SIZE) {
+					data = dmaBuf;
+				}
+				dataLen = 0;
 			}
 		}
-		LED_A_OFF();
 
 		
+		// work with data
+		if(dataLen > 0) {
+			for (int d = 0; d < dataLen; d++) {
+				if(MillerDecoding(*data, 0)) {
+					EmLogTraceReader();
+					
+					// WUPA in HALTED state or REQA or WUPA in any other state
+					if (Uart.len == 1 && ((received[0] == ISO14443A_CMD_REQA && state != eveHalted) || received[0] == ISO14443A_CMD_WUPA)) {
+						EmSendPrecompiledCmd(&resp[epATQA]);
+						
+						state = eveSelect1;
+						
+						iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+						FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+					}
+					
+					Dbprintf("data[%d]", Uart.len);
+					UartReset();
+				}
+				
+				data++;
+				if(data >= dmaBuf + EMV_DMA_BUFFER_SIZE) {
+					data = dmaBuf;
+				}
+			}
+			
+			switch (state) {
+				case eveIdle:
+					break;
+				default:
+					break;
+			}
+			
+			
+		}
+		
+		
+		// work with USB
 		if (usb_get_length() >= 64) {
 			rx_len = usb_read(rx, sizeof(UsbCommand));
 			if (rx_len) {
-				// exit from client
-				if (rxcmd->arg[0]) {
-					i = 200;
-				}
-			
-				if (i++ > 100) {
+				// exit from client or by button
+				if (rxcmd->arg[0] || EmulExit) {
 					LED_C_ON();
 					cmd_send(CMD_ACK, eveFinished, maxDataLen, 0, NULL, 0);
 					LED_C_OFF();
 					break;
+				}
+			
+				// send to field
+				if (state == eveReadyIso4 && rxcmd->arg[2] > 0) {
+					
+				}
+			
+			
+				// send response to cient
+				if (state == eveReadyIso4){ // and data len to client != 0
+					LED_C_ON();
+					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);
+					LED_C_OFF();
 				} else {
 					LED_C_ON();
 					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);
@@ -2721,12 +2897,8 @@ void RAMFUNC EMVEml(uint32_t param) {
 	
 	FpgaDisableSscDma();
 
-	Dbprintf("dlen=%d maxdlen=%d count=%u", dataLen, maxDataLen, sniffCounter);
+	Dbprintf("dlen=%d maxdlen=%d", dataLen, maxDataLen);
 
-	LED_C_ON();
-	cmd_send(CMD_ACK, eveFinished, 0, maxDataLen, NULL, 0);
-	LED_C_OFF();
-
-	Dbprintf("Command done.");
+	Dbprintf("Command sim done.");
 	LEDsoff();
 }

@@ -1013,6 +1013,7 @@ static int waitCmd(uint8_t iSelect) {
 }
 
 int CmdHF14ACmdEml(const char *cmd) {
+	uint32_t resG = 0;
 	uint32_t res = 0;
 	
 	UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
@@ -1029,7 +1030,10 @@ int CmdHF14ACmdEml(const char *cmd) {
 		SendCommand(&c);
 		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
 			res = resp.arg[0];
-			PrintAndLog("res=%d [%d]", res, resp.arg[1]);
+			if (resG != res) {
+				PrintAndLog("res=%d [%d]", res, resp.arg[1]);
+				resG = res;
+			}
 			if (!res) {
 				PrintAndLog("All is OK. Returned.");
 				break;
