@@ -178,6 +178,41 @@ int AvgAdc(int ch) // was static - merlok
 	return (a + 15) >> 5;
 }
 
+int InitAdc(bool start) {
+	AT91C_BASE_ADC->ADC_CR = AT91C_ADC_SWRST;
+	AT91C_BASE_ADC->ADC_MR =
+				ADC_MODE_PRESCALE(63) |
+				ADC_MODE_STARTUP_TIME(1) |
+				ADC_MODE_SAMPLE_HOLD_TIME(15);
+	AT91C_BASE_ADC->ADC_CHER = ADC_CHANNEL(ADC_CHAN_HF);
+	
+	// start ADC
+	if (start)
+		AT91C_BASE_ADC->ADC_CR = AT91C_ADC_START;
+	
+	return 0;
+}
+
+int TickAdc() {
+	static int analogCnt;
+	static int analogAVG;
+
+	if (AT91C_BASE_ADC->ADC_SR & ADC_END_OF_CONVERSION(ADC_CHAN_HF)) {
+		analogCnt++;
+		analogAVG += AT91C_BASE_ADC->ADC_CDR[ADC_CHAN_HF];
+		AT91C_BASE_ADC->ADC_CR = AT91C_ADC_START;
+		if (analogCnt >= 32) {
+			int res = MAX_ADC_HF_VOLTAGE * (analogAVG / analogCnt) >> 10;
+			analogCnt = 0;
+			analogAVG = 0;
+			return res;
+		} else {
+			return -1;
+		}
+	}
+	return -1;
+}
+
 void MeasureAntennaTuningLfOnly(int *vLf125, int *vLf134, int *peakf, int *peakv, uint8_t LF_Results[])
 {
 	int i, adcval = 0, peak = 0;

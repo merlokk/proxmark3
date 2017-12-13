@@ -2763,12 +2763,15 @@ void RAMFUNC EMVEml(uint32_t param) {
 
 	LED_B_OFF();
 
-	// here some init commands
 	uint8_t received[MAX_EMV_FRAME_SIZE];
 	uint8_t receivedPar[MAX_EMV_PARITY_SIZE];
-	UartInit(received, receivedPar);
+
+	// init ADC
+	uint32_t vtime = 0;
+	bool FieldPresent = false;
+	InitAdc(true);	
 	
-	// init ACK
+	// init command ACK
 	state = eveInitDone;
 	LED_C_ON();
 	cmd_send(CMD_ACK, state, 0, 0, NULL, 0);
@@ -2776,6 +2779,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 
 	// init
 	iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+	UartInit(received, receivedPar);
 	FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
 	
 	state = eveNoField;
@@ -2798,22 +2802,37 @@ void RAMFUNC EMVEml(uint32_t param) {
 			}
 		}
 
-		// check field
-		if (state == eveNoField){
-		int vHf = (MAX_ADC_HF_VOLTAGE * AvgAdc(ADC_CHAN_HF)) >> 10;
-		if (vHf > MF_MINFIELDV) {
-			LED_A_ON();
-			if (state != eveIdle)	
-				UartReset();
-			state = eveIdle;
-		} else {
-			LED_A_OFF();
-			if (state != eveNoField)	
-				UartReset();
-			state = eveNoField;
+		// test if the field exists
+		int vHf = TickAdc();
+		bool newFieldPresent = false;
+		if (vHf >= 0) {
+			newFieldPresent = (vHf > MF_MINFIELDV);
+		
+			if (newFieldPresent != FieldPresent) {
+				if (vtime) {
+					if (GetTickCount() - vtime > 50) {
+						vtime = 0;
+						FieldPresent = newFieldPresent;
+
+						if (state != eveIdle)	
+							UartReset();
+						if (FieldPresent) {
+							LED_A_ON();
+							state = eveIdle;
+						} else {
+							LED_A_OFF();
+							state = eveNoField;
+						}
+					}
+				} else {
+					vtime = GetTickCount();
+				}
+			} else {
+				vtime = 0;
+			}
+
 		}
-		}
-			
+
 		if (state == eveNoField) {
 			// clear data from FPGA
 			if(dataLen > 0) {
