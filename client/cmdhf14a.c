@@ -1035,7 +1035,7 @@ int CmdHF14ACmdEml(const char *cmd) {
 				resG = res;
 			}
 			if (!res) {
-				PrintAndLog("All is OK. Returned.");
+				PrintAndLog("Command finished.");
 				break;
 			}
 			

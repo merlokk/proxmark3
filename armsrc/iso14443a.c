@@ -2813,6 +2813,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 				
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+				LED_B_ON();
 			}
 
 			// handle HALT
@@ -2895,7 +2896,6 @@ void RAMFUNC EMVEml(uint32_t param) {
 	while (resp) {
 		WDT_HIT();
 		if(BUTTON_PRESS()) {
-			DbpString("Canceled by button...");
 			EmulExit = true;
 			break;
 		}
@@ -2930,6 +2930,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 							state = eveIdle;
 						} else {
 							LED_A_OFF();
+							LED_B_OFF();
 							state = eveNoField;
 						}
 					}
@@ -2963,10 +2964,11 @@ void RAMFUNC EMVEml(uint32_t param) {
 						EMVEmlProceesSelectCore(&state, (uint8_t *)dmaBuf, resp, received, receivedPar, Uart.len);
 					} else {
 						do {
-							// deselect
+							// deselect -- need to add check APDU (or maybe transfer it to client....)
 							if (Uart.len == 4 && received[0] == 0xca && received[1] == 0x00 && CheckCrc14443(CRC_14443_A, received, Uart.len)) {
-								// TODO: send response
+								EmSendCmd(received, 4);
 								state = eveHalted;
+								LED_B_OFF();
 								break;
 							}
 							
