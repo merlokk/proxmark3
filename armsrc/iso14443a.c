@@ -2588,7 +2588,7 @@ void RAMFUNC SniffMifare(uint8_t param) {
 // EMV emulator. 
 // 
 //-----------------------------------------------------------------------------
-#define EMV_DMA_BUFFER_SIZE 2048LL
+#define EMV_DMA_BUFFER_SIZE 4096LL
 #define MAX_EMV_FRAME_SIZE  257
 #define MAX_EMV_PARITY_SIZE 33
 #define EMV_MAX_ATS_LEN 100
@@ -2667,6 +2667,7 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 	rATQA[0] = ATQA[1];
 	rATQA[1] = ATQA[0];
 	memcpy(rATS, ATS, ATSLen);
+	AppendCrc14443a(rATS, ATSLen);
 	
 	switch(UIDLen) {
 		case 4:
@@ -2714,11 +2715,11 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 		{ .response = rSAK3,     .response_n = sizeof(rSAK3) },	
 		{ .response = rATS,      .response_n = 1 },	
 	};
-	responses_init[7].response_n = ATSLen;
+	responses_init[8].response_n = ATSLen + 2;
 
 	// Here are array of predefined responses. Coded responses need one byte per bit to transfer (data, parity, start, stop, correction) 
 	// data_len * 8 data bits, data_len * 1 parity bits, response_count * (1 start bit, 1 stop bit, 1 correction bit)
-	size_t free_buffer_size = (26 + ATSLen) * 9 + 3 * 8 + 10;
+	size_t free_buffer_size = (26 + ATSLen + 2) * 9 + 3 * 8 + 10;
 	uint8_t *free_buffer_pointer = BigBuf_malloc(free_buffer_size);
 	for (size_t i = 1; i < sizeof(responses_init) / sizeof(responses_init[0]); i++) {
 		prepare_allocated_tag_modulation(&responses_init[i], &free_buffer_pointer, &free_buffer_size);
@@ -2852,8 +2853,8 @@ void RAMFUNC EMVEml(uint32_t param) {
 	size_t UIDLen = 4;
 	uint8_t *ATQA = (uint8_t*)"\x00\x04";
 	uint8_t *SAK = (uint8_t*)"\x20";
-	uint8_t *ATS = (uint8_t*)"\x13\x78\x80\x72\x02\x80\x31\x80\x66\xb1\x84\x0c\x01\x6e\x01\x83\x00\x90\x00\x11\xd8";
-	size_t ATSLen = 21;
+	uint8_t *ATS = (uint8_t*)"\x13\x78\x80\x72\x02\x80\x31\x80\x66\xb1\x84\x0c\x01\x6e\x01\x83\x00\x90\x00";
+	size_t ATSLen = 19;
 	
 	// init precompiled responses
 	tag_response_info_t *resp = EMVEmlInitData(UID, UIDLen, ATQA, SAK, ATS, ATSLen);
