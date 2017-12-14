@@ -2601,7 +2601,7 @@ enum EMVEmlState {
 	eveSelect1,
 	eveSelect2,
 	eveSelect3,
-	eveReadyIso3,
+	eveIso3,
 	eveReadyIso4,    // apdu working mode
 	eveReadQuery,
 	eveSendResponse,
@@ -2640,6 +2640,7 @@ static inline int SscDmaProcess(uint8_t *dmaBuf, int len, uint8_t *data) {
 }
 
 enum EMVPrecompiledData {
+	epUID,
 	epUIDBCC1,
 	epUIDBCC2,
 	epUIDBCC3,
@@ -2652,7 +2653,7 @@ enum EMVPrecompiledData {
 };
 
 tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, uint8_t *SAK, uint8_t *ATS, size_t ATSLen) {
-//	uint8_t *rUID = BigBuf_malloc(UIDLen);
+	static uint8_t rUID[10];
 	static uint8_t rUIDBCC1[5];
 	static uint8_t rUIDBCC2[5];
 	static uint8_t rUIDBCC3[5];
@@ -2662,6 +2663,7 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 	static uint8_t rSAK3[3];
 	static uint8_t rATS[EMV_MAX_ATS_LEN];
 	
+	memcpy(rUID, UID, UIDLen);
 	rATQA[0] = ATQA[1];
 	rATQA[1] = ATQA[0];
 	memcpy(rATS, ATS, ATSLen);
@@ -2680,7 +2682,7 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 			memcpy(rSAK2, SAK, 1);
 			break;
 		case 10:  // not tested!
-			rATQA[0] |= 0x40;
+			rATQA[0] |= 0x80;
 			rUIDBCC1[0] = 0x88;
 			memcpy(&rUIDBCC1[1], UID, 3);
 			rUIDBCC2[0] = 0x88;
@@ -2702,6 +2704,7 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 	AppendCrc14443a(rSAK3, 1);
 
 	static tag_response_info_t responses_init[] = {
+		{ .response = rUID,      .response_n = sizeof(UIDLen) },	
 		{ .response = rUIDBCC1,  .response_n = sizeof(rUIDBCC1) },	
 		{ .response = rUIDBCC2,  .response_n = sizeof(rUIDBCC2) },	
 		{ .response = rUIDBCC3,  .response_n = sizeof(rUIDBCC3) },	
@@ -2717,11 +2720,108 @@ tag_response_info_t *EMVEmlInitData(uint8_t *UID, size_t UIDLen, uint8_t *ATQA, 
 	// data_len * 8 data bits, data_len * 1 parity bits, response_count * (1 start bit, 1 stop bit, 1 correction bit)
 	size_t free_buffer_size = (26 + ATSLen) * 9 + 3 * 8 + 10;
 	uint8_t *free_buffer_pointer = BigBuf_malloc(free_buffer_size);
-	for (size_t i = 0; i < sizeof(responses_init) / sizeof(responses_init[0]); i++) {
+	for (size_t i = 1; i < sizeof(responses_init) / sizeof(responses_init[0]); i++) {
 		prepare_allocated_tag_modulation(&responses_init[i], &free_buffer_pointer, &free_buffer_size);
 	}
 	
 	return &responses_init[0];
+}
+
+int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_response_info_t *resp, uint8_t *received, uint8_t *receivedPar, uint16_t len) {
+	switch (*state) {
+		case eveIdle:
+		case eveSelect1:
+		case eveSelect2:
+		case eveSelect3:
+		case eveIso3:
+		case eveHalted:
+			break;
+		default: 
+			return -1;
+	}
+
+	// WUPA in HALTED state or REQA or WUPA in any other state
+	if (len == 1 && ((received[0] == ISO14443A_CMD_REQA && *state != eveHalted) || received[0] == ISO14443A_CMD_WUPA)) {
+		EmSendPrecompiledCmd(&resp[epATQA]);
+		
+		*state = eveSelect1;
+		
+		iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+		FpgaSetupSscDma(dmaBuf, EMV_DMA_BUFFER_SIZE); 
+		
+		return 0;
+	}
+	
+	switch (*state) {
+		case eveIdle:
+			break;
+		case eveSelect1:
+			if (len == 2 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT && received[1] == 0x20)) {
+				EmSendPrecompiledCmd(&resp[epUIDBCC1]);
+				
+				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+				FpgaSetupSscDma(dmaBuf, EMV_DMA_BUFFER_SIZE); 
+				break;
+			}
+
+			if (len == 9 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT && received[1] == 0x70 && memcmp(&received[2], resp[epUIDBCC1].response, 4) == 0)) {
+				EmSendPrecompiledCmd(&resp[epSAK1]);
+				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+
+				if (resp[epUID].response_n <= 4) {
+					*state = eveIso3;
+				} else {
+					*state = eveSelect2;
+				}
+			}
+			
+			break;
+		case eveSelect2:
+			if (len == 2 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT_2 && received[1] == 0x20)) {
+				EmSendPrecompiledCmd(&resp[epUIDBCC2]);
+				
+				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+				FpgaSetupSscDma(dmaBuf, EMV_DMA_BUFFER_SIZE); 
+				break;
+			}
+		
+			if (len == 9 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT_2 && received[1] == 0x70 && memcmp(&received[2], resp[epUIDBCC1].response, 4) == 0)) {
+				EmSendPrecompiledCmd(&resp[epSAK2]);
+				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+
+				if (resp[epUID].response_n <= 4) {
+					*state = eveIso3;
+				} else {
+					*state = eveSelect3;
+				}
+			}
+			break;
+		case eveSelect3:
+				*state = eveIso3;
+			break;
+		case eveIso3:
+			// Maybe need to handle PPS (ISO14443-4) (3 bytes [PPSS, PPS0, PPS1] + CRC). Response - PPSS + CRC
+
+			// Handle RATS
+			if (len == 4 && (received[0] == 0xe0 && received[1] == 0x80 && CheckCrc14443(CRC_14443_A, received, len))) {
+				EmSendPrecompiledCmd(&resp[epATS]);
+				
+				*state = eveReadyIso4;
+				
+				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
+				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+			}
+			
+			break;
+		case eveHalted:
+			break;
+		default: 
+			return -1;
+	}
+	
+	return 0;
 }
 
 void RAMFUNC EMVEml(uint32_t param) {
@@ -2758,7 +2858,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 	// init precompiled responses
 	tag_response_info_t *resp = EMVEmlInitData(UID, UIDLen, ATQA, SAK, ATS, ATSLen);
 	if (!resp) {
-		Dbprintf("ERROR: can't allocate buffer for precompiled reponses.");
+		Dbprintf("ERROR: can't allocate buffer for precompiled responses.");
 	}
 
 	LED_B_OFF();
@@ -2786,7 +2886,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 	while (resp) {
 		WDT_HIT();
 		if(BUTTON_PRESS()) {
-			DbpString("Cancelled by button...");
+			DbpString("Canceled by button...");
 			EmulExit = true;
 			break;
 		}
@@ -2850,18 +2950,13 @@ void RAMFUNC EMVEml(uint32_t param) {
 			for (int d = 0; d < dataLen; d++) {
 				if(MillerDecoding(*data, 0)) {
 					EmLogTraceReader();
-					
-					// WUPA in HALTED state or REQA or WUPA in any other state
-					if (Uart.len == 1 && ((received[0] == ISO14443A_CMD_REQA && state != eveHalted) || received[0] == ISO14443A_CMD_WUPA)) {
-						EmSendPrecompiledCmd(&resp[epATQA]);
-						
-						state = eveSelect1;
-						
-						iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
-						FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
+					if (state != eveReadyIso4) {
+						EMVEmlProceesSelectCore(&state, (uint8_t *)dmaBuf, resp, received, receivedPar, Uart.len);
+					} else {
+						// code for send data to client
+						Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
 					}
 					
-					Dbprintf("data[%d]", Uart.len);
 					UartReset();
 				}
 				
@@ -2870,15 +2965,6 @@ void RAMFUNC EMVEml(uint32_t param) {
 					data = dmaBuf;
 				}
 			}
-			
-			switch (state) {
-				case eveIdle:
-					break;
-				default:
-					break;
-			}
-			
-			
 		}
 		
 		
@@ -2900,7 +2986,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 				}
 			
 			
-				// send response to cient
+				// send response to client
 				if (state == eveReadyIso4){ // and data len to client != 0
 					LED_C_ON();
 					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);
