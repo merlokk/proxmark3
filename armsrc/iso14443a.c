@@ -2814,6 +2814,11 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
 			}
+
+			// handle HALT
+			if (len == 4 && (received[0] == ISO14443A_CMD_HALT && received[1] == 0x00 && CheckCrc14443(CRC_14443_A, received, len))) {
+				*state = eveHalted;
+			}
 			
 			break;
 		case eveHalted:
@@ -2860,6 +2865,9 @@ void RAMFUNC EMVEml(uint32_t param) {
 	tag_response_info_t *resp = EMVEmlInitData(UID, UIDLen, ATQA, SAK, ATS, ATSLen);
 	if (!resp) {
 		Dbprintf("ERROR: can't allocate buffer for precompiled responses.");
+		LED_C_ON();
+		cmd_send(CMD_ACK, eveFinished, maxDataLen, 0, NULL, 0);
+		LED_C_OFF();
 	}
 
 	LED_B_OFF();
@@ -2954,8 +2962,17 @@ void RAMFUNC EMVEml(uint32_t param) {
 					if (state != eveReadyIso4) {
 						EMVEmlProceesSelectCore(&state, (uint8_t *)dmaBuf, resp, received, receivedPar, Uart.len);
 					} else {
-						// code for send data to client
-						Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
+						do {
+							// deselect
+							if (Uart.len == 4 && received[0] == 0xca && received[1] == 0x00 && CheckCrc14443(CRC_14443_A, received, Uart.len)) {
+								// TODO: send response
+								state = eveHalted;
+								break;
+							}
+							
+							// code for send data to client
+							Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
+						} while (0);
 					}
 					
 					UartReset();
