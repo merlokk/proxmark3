@@ -2875,6 +2875,8 @@ void RAMFUNC EMVEml(uint32_t param) {
 
 	uint8_t received[MAX_EMV_FRAME_SIZE];
 	uint8_t receivedPar[MAX_EMV_PARITY_SIZE];
+	uint8_t *sendingBuf = BigBuf_malloc(MAX_EMV_FRAME_SIZE);
+	size_t sendingLength = 0;
 
 	// init ADC
 	uint32_t vtime = 0;
@@ -2897,7 +2899,6 @@ void RAMFUNC EMVEml(uint32_t param) {
 		WDT_HIT();
 		if(BUTTON_PRESS()) {
 			EmulExit = true;
-			break;
 		}
 
 		dataLen = SscDmaProcess(dmaBuf, EMV_DMA_BUFFER_SIZE, data);
@@ -2966,14 +2967,16 @@ void RAMFUNC EMVEml(uint32_t param) {
 						do {
 							// deselect -- need to add check APDU (or maybe transfer it to client....)
 							if (Uart.len == 4 && received[0] == 0xca && received[1] == 0x00 && CheckCrc14443(CRC_14443_A, received, Uart.len)) {
-								EmSendCmd(received, 4);
-								state = eveHalted;
+//								EmSendCmd(received, 4);
+//								state = eveHalted;
 								LED_B_OFF();
 								break;
 							}
 							
 							// code for send data to client
 							Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
+							sendingLength = Uart.len;
+							memcpy(sendingBuf, received, Uart.len);
 						} while (0);
 					}
 					
@@ -3007,10 +3010,11 @@ void RAMFUNC EMVEml(uint32_t param) {
 			
 			
 				// send response to client
-				if (state == eveReadyIso4){ // and data len to client != 0
+				if (state == eveReadyIso4 && sendingLength){ // TODO! here we can send only 48 bytes!!!!!!! need to write chaining code....
 					LED_C_ON();
-					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);
+					cmd_send(CMD_ACK, state, maxDataLen, sendingLength, sendingBuf, sendingLength);
 					LED_C_OFF();
+					sendingLength = 0;
 				} else {
 					LED_C_ON();
 					cmd_send(CMD_ACK, state, maxDataLen, 0, NULL, 0);

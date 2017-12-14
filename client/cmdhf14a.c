@@ -1016,11 +1016,10 @@ int CmdHF14ACmdEml(const char *cmd) {
 	uint32_t resG = 0;
 	uint32_t res = 0;
 	
-	UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
 
     UsbCommand resp;
 	while (true) {
-		c.arg[0] = 0x00;
+		UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
 		if (ukbhit()) {
 			getchar();
 			printf("\nAborted via keyboard!\n");
@@ -1028,6 +1027,7 @@ int CmdHF14ACmdEml(const char *cmd) {
 		}
 
 		SendCommand(&c);
+
 		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
 			res = resp.arg[0];
 			if (resG != res) {
@@ -1037,6 +1037,10 @@ int CmdHF14ACmdEml(const char *cmd) {
 			if (!res) {
 				PrintAndLog("Command finished.");
 				break;
+			}
+			
+			if (resp.arg[2]) {
+				PrintAndLog("recv[%d]=%s", resp.arg[2], sprint_hex(resp.d.asBytes, resp.arg[2]));
 			}
 			
 		} else {
