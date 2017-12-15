@@ -1017,7 +1017,6 @@ int CmdHF14ACmdEml(const char *cmd) {
 	uint32_t res = 0;
 	
 
-    UsbCommand resp;
 	while (true) {
 		UsbCommand c = {CMD_EMV_EMULATOR, {0, 0, 0}};
 		if (ukbhit()) {
@@ -1028,6 +1027,7 @@ int CmdHF14ACmdEml(const char *cmd) {
 
 		SendCommand(&c);
 
+		UsbCommand resp;
 		if (WaitForResponseTimeout(CMD_ACK, &resp, 2000)) {
 			res = resp.arg[0];
 			if (resG != res) {

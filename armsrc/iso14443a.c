@@ -1569,6 +1569,19 @@ int EmSendPrecompiledCmd(tag_response_info_t *response_info) {
 	return ret;
 }
 
+int EmSendAndWaitPrecompiledCmd(tag_response_info_t *response_info) {
+	int res = EmSendPrecompiledCmd(response_info);
+
+	// Ensure that the FPGA Delay Queue is empty before we switch to TAGSIM_LISTEN
+	do {
+		if(AT91C_BASE_SSC->SSC_SR & (AT91C_SSC_TXRDY)) {
+			AT91C_BASE_SSC->SSC_THR = SEC_F;
+			uint8_t b = (uint8_t)AT91C_BASE_SSC->SSC_RHR; (void) b;
+		}
+	} while (GetCountSspClk() < LastTimeProxToAirStart + LastProxToAirDuration + (FpgaSendQueueDelay>>3));
+
+	return res;
+}
 
 //-----------------------------------------------------------------------------
 // Wait a certain time for tag response
@@ -2743,7 +2756,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 
 	// WUPA in HALTED state or REQA or WUPA in any other state
 	if (len == 1 && ((received[0] == ISO14443A_CMD_REQA && *state != eveHalted) || received[0] == ISO14443A_CMD_WUPA)) {
-		EmSendPrecompiledCmd(&resp[epATQA]);
+		EmSendAndWaitPrecompiledCmd(&resp[epATQA]);
 		
 		*state = eveSelect1;
 		
@@ -2758,7 +2771,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 			break;
 		case eveSelect1:
 			if (len == 2 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT && received[1] == 0x20)) {
-				EmSendPrecompiledCmd(&resp[epUIDBCC1]);
+				EmSendAndWaitPrecompiledCmd(&resp[epUIDBCC1]);
 				
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma(dmaBuf, EMV_DMA_BUFFER_SIZE); 
@@ -2766,7 +2779,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 			}
 
 			if (len == 9 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT && received[1] == 0x70 && memcmp(&received[2], resp[epUIDBCC1].response, 4) == 0)) {
-				EmSendPrecompiledCmd(&resp[epSAK1]);
+				EmSendAndWaitPrecompiledCmd(&resp[epSAK1]);
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
 
@@ -2780,7 +2793,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 			break;
 		case eveSelect2:
 			if (len == 2 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT_2 && received[1] == 0x20)) {
-				EmSendPrecompiledCmd(&resp[epUIDBCC2]);
+				EmSendAndWaitPrecompiledCmd(&resp[epUIDBCC2]);
 				
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma(dmaBuf, EMV_DMA_BUFFER_SIZE); 
@@ -2788,7 +2801,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 			}
 		
 			if (len == 9 && (received[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT_2 && received[1] == 0x70 && memcmp(&received[2], resp[epUIDBCC1].response, 4) == 0)) {
-				EmSendPrecompiledCmd(&resp[epSAK2]);
+				EmSendAndWaitPrecompiledCmd(&resp[epSAK2]);
 				iso14443a_setup(FPGA_HF_ISO14443A_TAGSIM_LISTEN);
 				FpgaSetupSscDma((uint8_t *)dmaBuf, EMV_DMA_BUFFER_SIZE); 
 
@@ -2807,7 +2820,7 @@ int EMVEmlProceesSelectCore(enum EMVEmlState *state, uint8_t *dmaBuf, tag_respon
 
 			// Handle RATS
 			if (len == 4 && (received[0] == 0xe0 && received[1] == 0x80 && CheckCrc14443(CRC_14443_A, received, len))) {
-				EmSendPrecompiledCmd(&resp[epATS]);
+				EmSendAndWaitPrecompiledCmd(&resp[epATS]);
 				
 				*state = eveReadyIso4;
 				
@@ -3011,6 +3024,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 			
 				// send response to client
 				if (state == eveReadyIso4 && sendingLength){ // TODO! here we can send only 48 bytes!!!!!!! need to write chaining code....
+Dbprintf("send[%d]=%02x %02x", sendingLength, sendingBuf[0], sendingBuf[1]);
 					LED_C_ON();
 					cmd_send(CMD_ACK, state, maxDataLen, sendingLength, sendingBuf, sendingLength);
 					LED_C_OFF();
