@@ -1,5 +1,7 @@
 # proxmark3: the official Proxmark repository!
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/6fc0518faf8a418cbd2c1e74244d0c9e)](https://www.codacy.com/app/merlokk/proxmark3?utm_source=github.com&utm_medium=referral&utm_content=merlokk/proxmark3&utm_campaign=badger)
+
 The proxmark3 is a powerful general purpose RFID tool, the size of a deck
 of cards, designed to snoop, listen and emulate everything from
 **Low Frequency (125kHz)** to **High Frequency (13.56MHz)** tags.
