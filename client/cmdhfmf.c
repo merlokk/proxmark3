@@ -25,6 +25,7 @@
 #include "mifarehost.h"
 #include "mifare.h"
 #include "mfkey.h"
+#include "hardnested/hardnested_bf_core.h"
 
 #define NESTED_SECTOR_RETRY     10			// how often we try mfested() until we give up
 
@@ -862,6 +863,13 @@ int CmdHF14AMfNestedHard(const char *Cmd)
 		PrintAndLog("      w: Acquire nonces and write them to binary file nonces.bin");
 		PrintAndLog("      s: Slower acquisition (required by some non standard cards)");
 		PrintAndLog("      r: Read nonces.bin and start attack");
+		PrintAndLog("      iX: set type of SIMD instructions. Without this flag programs autodetect it.");
+		PrintAndLog("        i5: AVX512");
+		PrintAndLog("        i2: AVX2");
+		PrintAndLog("        ia: AVX");
+		PrintAndLog("        is: SSE2");
+		PrintAndLog("        im: MMX");
+		PrintAndLog("        in: none (use CPU regular instruction set)");
 		PrintAndLog(" ");
 		PrintAndLog("      sample1: hf mf hardnested 0 A FFFFFFFFFFFF 4 A");
 		PrintAndLog("      sample2: hf mf hardnested 0 A FFFFFFFFFFFF 4 A w");
@@ -880,15 +888,20 @@ int CmdHF14AMfNestedHard(const char *Cmd)
 	int tests = 0;
 
 
+	uint16_t iindx = 0;
 	if (ctmp == 'R' || ctmp == 'r') {
 		nonce_file_read = true;
+		iindx = 1;
 		if (!param_gethex(Cmd, 1, trgkey, 12)) {
 			know_target_key = true;
+			iindx = 2;
 		}
 	} else if (ctmp == 'T' || ctmp == 't') {
 		tests = param_get32ex(Cmd, 1, 100, 10);
+		iindx = 2;
 		if (!param_gethex(Cmd, 2, trgkey, 12)) {
 			know_target_key = true;
+			iindx = 3;
 		}
 	} else {
 		blockNo = param_get8(Cmd, 0);
@@ -922,18 +935,53 @@ int CmdHF14AMfNestedHard(const char *Cmd)
 			know_target_key = true;
 			i++;
 		}
+		iindx = i;
 
 		while ((ctmp = param_getchar(Cmd, i))) {
 			if (ctmp == 's' || ctmp == 'S') {
 				slow = true;
 			} else if (ctmp == 'w' || ctmp == 'W') {
 				nonce_file_write = true;
+			} else if (param_getlength(Cmd, i) == 2 && ctmp == 'i') {
+				iindx = i;
 			} else {
-				PrintAndLog("Possible options are w and/or s");
+				PrintAndLog("Possible options are w , s and/or iX");
 				return 1;
 			}
 			i++;
 		}
+	}
+	
+	SetSIMDInstr(SIMD_AUTO);
+	if (iindx > 0) {
+		while ((ctmp = param_getchar(Cmd, iindx))) {
+			if (param_getlength(Cmd, iindx) == 2 && ctmp == 'i') {
+				switch(param_getchar_indx(Cmd, 1, iindx)) {
+					case '5':
+						SetSIMDInstr(SIMD_AVX512);
+						break;
+					case '2':
+						SetSIMDInstr(SIMD_AVX2);
+						break;
+					case 'a':
+						SetSIMDInstr(SIMD_AVX);
+						break;
+					case 's':
+						SetSIMDInstr(SIMD_SSE2);
+						break;
+					case 'm':
+						SetSIMDInstr(SIMD_MMX);
+						break;
+					case 'n':
+						SetSIMDInstr(SIMD_NONE);
+						break;
+					default:
+						PrintAndLog("Unknown SIMD type. %c", param_getchar_indx(Cmd, 1, iindx));
+						return 1;
+				}
+			}
+			iindx++;
+		}	
 	}
 
 	PrintAndLog("--target block no:%3d, target key type:%c, known target key: 0x%02x%02x%02x%02x%02x%02x%s, file action: %s, Slow: %s, Tests: %d ",
@@ -987,6 +1035,7 @@ int CmdHF14AMfChk(const char *Cmd)
 	int i, res;
 	int	keycnt = 0;
 	char ctmp	= 0x00;
+	int clen = 0;
 	char ctmp3[3]	= {0x00};
 	uint8_t blockNo = 0;
 	uint8_t SectorsCnt = 0;
@@ -1015,32 +1064,36 @@ int CmdHF14AMfChk(const char *Cmd)
 		blockNo = param_get8(Cmd, 0);
 
 	ctmp = param_getchar(Cmd, 1);
-	switch (ctmp) {
-	case 'a': case 'A':
-		keyType = 0;
-		break;
-	case 'b': case 'B':
-		keyType = 1;
-		break;
-	case '?':
-		keyType = 2;
-		break;
-	default:
-		PrintAndLog("Key type must be A , B or ?");
-		free(keyBlock);
-		return 1;
-	};
+	clen = param_getlength(Cmd, 1);
+	if (clen == 1) {
+		switch (ctmp) {
+		case 'a': case 'A':
+			keyType = 0;
+			break;
+		case 'b': case 'B':
+			keyType = 1;
+			break;
+		case '?':
+			keyType = 2;
+			break;
+		default:
+			PrintAndLog("Key type must be A , B or ?");
+			free(keyBlock);
+			return 1;
+		};
+	}
 
 	// transfer to emulator & create dump file
 	ctmp = param_getchar(Cmd, 2);
-	if (ctmp == 't' || ctmp == 'T') transferToEml = 1;
-	if (ctmp == 'd' || ctmp == 'D') createDumpFile = 1;
+	clen = param_getlength(Cmd, 2);
+	if (clen == 1 && (ctmp == 't' || ctmp == 'T')) transferToEml = 1;
+	if (clen == 1 && (ctmp == 'd' || ctmp == 'D')) createDumpFile = 1;
 	
 	param3InUse = transferToEml | createDumpFile;
 	
 	timeout14a = 500; // fast by default
 	// double parameters - ts, ds
-	int clen = param_getlength(Cmd, 2);
+	clen = param_getlength(Cmd, 2);
 	if (clen == 2 || clen == 3){
 		param_getstr(Cmd, 2, ctmp3, sizeof(ctmp3));
 		ctmp = ctmp3[1];
@@ -1089,7 +1142,7 @@ int CmdHF14AMfChk(const char *Cmd)
 
 					if( buf[0]=='#' ) continue;	//The line start with # is comment, skip
 
-					if (!isxdigit(buf[0])){
+					if (!isxdigit((unsigned char)buf[0])){
 						PrintAndLog("File content error. '%s' must include 12 HEX symbols",buf);
 						continue;
 					}
