@@ -2922,6 +2922,10 @@ void RAMFUNC EMVEml(uint32_t param) {
 			maxDataLen = dataLen;					
 			if(dataLen > (EMV_DMA_BUFFER_SIZE * 9 / 10)) {
 				Dbprintf("blew circular buffer! dataLen=0x%x", dataLen);
+
+				LED_C_ON();
+				cmd_send(CMD_ACK, eveFinished, maxDataLen, 0, NULL, 0);
+				LED_C_OFF();
 				break;
 			}
 		}
