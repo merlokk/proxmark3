@@ -2907,7 +2907,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 		WDT_HIT();
 		if(BUTTON_PRESS()) {
 			EmulExit = true;
-			break; // if usb not works
+//			break; // if usb not works
 		}
 
 		dataLen = SscDmaProcess(dmaBuf, EMV_DMA_BUFFER_SIZE, data);
@@ -2983,8 +2983,8 @@ void RAMFUNC EMVEml(uint32_t param) {
 						do {
 							// deselect -- need to add check APDU (or maybe transfer it to client....)
 							if (Uart.len == 4 && received[0] == 0xca && received[1] == 0x00 && CheckCrc14443(CRC_14443_A, received, Uart.len)) {
-//								EmSendCmd(received, 4);
-//								state = eveHalted;
+								EmSendCmd(received, 4);
+								state = eveHalted;
 								LED_B_OFF();
 								break;
 							}
@@ -3008,7 +3008,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 		
 		
 		// work with USB
-		if (false&&usb_get_length() >= 64) {
+		if (usb_get_length() >= 64) {
 			rx_len = usb_read(rx, sizeof(UsbCommand));
 			if (rx_len) {
 				// exit from client or by button
