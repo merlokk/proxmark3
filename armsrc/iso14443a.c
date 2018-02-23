@@ -2990,7 +2990,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 							}
 							
 							// code for send data to client
-							Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
+							//Dbprintf("data[%d]=%02x %02x", Uart.len, received[0], received[1]);
 							sendingLength = Uart.len;
 							memcpy(sendingBuf, received, Uart.len);
 						} while (0);
@@ -3021,7 +3021,7 @@ void RAMFUNC EMVEml(uint32_t param) {
 			
 				// send to field
 				if (state == eveReadyIso4 && rxcmd->arg[2] > 0) {
-					
+					EmSendCmd(rxcmd->d.asBytes, rx_len);
 				}
 			
 			
